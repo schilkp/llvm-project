@@ -575,7 +575,9 @@ def ViewOpGraphPass : Pass<"view-op-graph"> {
     Option<"printDataFlowEdges", "print-data-flow-edges", "bool",
            /*default=*/"true", "Print data flow edges">,
     Option<"printResultTypes", "print-result-types", "bool",
-            /*default=*/"true", "Print result types of operations">
+            /*default=*/"true", "Print result types of operations">,
+    Option<"printAsRecords", "print-as-records", "bool",
+            /*default=*/"true", "Print ports on operation nodes">
   ];
 }
 

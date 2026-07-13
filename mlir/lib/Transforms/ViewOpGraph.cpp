@@ -30,7 +30,6 @@ using namespace mlir;
 
 static const StringRef kLineStyleControlFlow = "dashed";
 static const StringRef kLineStyleDataFlow = "solid";
-static const StringRef kShapeNode = "Mrecord";
 static const StringRef kShapeNone = "plain";
 
 /// Return the size limits for eliding large attributes.
@@ -255,14 +254,18 @@ private:
 
     edges.push_back(strFromOs([&](raw_ostream &os) {
       os << "v" << n1.id;
-      if (!port.empty() && !n1.clusterId)
-        // Attach edge to south compass point of the result
-        os << ":res" << port << ":s";
+      if (printAsRecords) {
+        if (!port.empty() && !n1.clusterId)
+          // Attach edge to south compass point of the result
+          os << ":res" << port << ":s";
+      }
       os << " -> ";
       os << "v" << n2.id;
-      if (!port.empty() && !n2.clusterId)
-        // Attach edge to north compass point of the operand
-        os << ":arg" << port << ":n";
+      if (printAsRecords) {
+        if (!port.empty() && !n2.clusterId)
+          // Attach edge to north compass point of the operand
+          os << ":arg" << port << ":n";
+      }
       emitAttrList(os, attrs);
     }));
   }
@@ -279,7 +282,7 @@ private:
   }
 
   /// Emit a node statement.
-  Node emitNodeStmt(const std::string &label, StringRef shape = kShapeNode,
+  Node emitNodeStmt(const std::string &label, StringRef shape,
                     StringRef background = "") {
     int nodeId = ++counter;
     AttributeMap attrs;
@@ -331,8 +334,48 @@ private:
     });
   }
 
-  /// Generate a label for an operation.
-  std::string getRecordLabel(Operation *op) {
+  /// Generate a basic label for an operation.
+  std::string getBasicNodeLabel(Operation *op) {
+    return strFromOs([&](raw_ostream &os) {
+      // Print operation name and type.
+      os << op->getName();
+
+      // Print result types:
+      if (op->getNumResults() > 0) {
+        if (printResultTypes) {
+          os << " : ";
+          if (op->getNumResults() > 1) {
+            os << "(";
+          }
+          auto resultToType = [&](Value result) {
+            emitMlirType(os, result.getType());
+          };
+          interleave(op->getResults(), os, resultToType, ", ");
+          if (op->getNumResults() > 1) {
+            os << ")";
+          }
+        }
+      }
+
+      // Print attributes.
+      if (printAttrs && !op->getAttrs().empty()) {
+        os << " attr={";
+        bool is_first = true;
+
+        for (const NamedAttribute &attr : op->getAttrs()) {
+          if (!is_first)
+            os << ",";
+          is_first = false;
+          os << attr.getName().getValue() << ": ";
+          emitMlirAttr(os, attr.getValue());
+        }
+        os << "}";
+      }
+    });
+  }
+
+  /// Generate a record-style label for an operation.
+  std::string getRecordNodeLabel(Operation *op) {
     return strFromOs([&](raw_ostream &os) {
       os << "{";
 
@@ -378,13 +421,20 @@ private:
     });
   }
 
+  /// Generate a label for an operation.
+  std::string getNodeLabel(Operation *op) {
+    return printAsRecords ? getRecordNodeLabel(op) : getBasicNodeLabel(op);
+  }
+
   /// Generate a label for a block argument.
   std::string getLabel(BlockArgument arg) {
     return strFromOs([&](raw_ostream &os) {
-      os << "<res" << getValuePortName(arg) << "> ";
+      if (printAsRecords) {
+        os << "<res" << getValuePortName(arg) << "> ";
+      }
       arg.printAsOperand(os, *asmState);
       if (printResultTypes) {
-        os << " ";
+        os << " : ";
         emitMlirType(os, arg.getType());
       }
     });
@@ -395,7 +445,7 @@ private:
   void processBlock(Block &block) {
     emitClusterStmt([&]() {
       for (BlockArgument &blockArg : block.getArguments())
-        valueToNode[blockArg] = emitNodeStmt(getLabel(blockArg));
+        valueToNode[blockArg] = emitNodeStmt(getLabel(blockArg), nodeShape());
       // Emit a node for each operation.
       std::optional<Node> prevNode;
       for (Operation &op : block) {
@@ -420,7 +470,7 @@ private:
           },
           getClusterLabel(op));
     } else {
-      node = emitNodeStmt(getRecordLabel(op), kShapeNode,
+      node = emitNodeStmt(getNodeLabel(op), nodeShape(),
                           backgroundColors[op->getName()].second);
     }
 
@@ -468,6 +518,9 @@ private:
   int counter = 0;
 
   DenseMap<OperationName, std::pair<int, std::string>> backgroundColors;
+
+private:
+  const char *nodeShape() { return printAsRecords ? "Mrecord" : "oval"; }
 };
 
 } // namespace
