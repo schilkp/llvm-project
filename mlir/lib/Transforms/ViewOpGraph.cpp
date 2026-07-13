@@ -8,6 +8,7 @@
 
 #include "mlir/Transforms/ViewOpGraph.h"
 
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
@@ -108,10 +109,12 @@ public:
 
   void runOnOperation() override {
     initColorMapping(*getOperation());
+    asmState.emplace(getOperation(), OpPrintingFlags());
     emitGraph([&]() {
       processOperation(getOperation());
       emitAllEdgeStmts();
     });
+    asmState.reset();
     markAllAnalysesPreserved();
   }
 
@@ -120,7 +123,9 @@ public:
     printControlFlowEdges = true;
     printDataFlowEdges = false;
     initColorMapping(region);
+    asmState.emplace(region.getParentOp(), OpPrintingFlags());
     emitGraph([&]() { processRegion(region); });
+    asmState.reset();
   }
 
 private:
@@ -234,7 +239,7 @@ private:
 
   // Print a truncated and escaped MLIR operand to `os`.
   void emitMlirOperand(raw_ostream &os, Value operand) {
-    operand.printAsOperand(os, OpPrintingFlags());
+    operand.printAsOperand(os, *asmState);
   }
 
   /// Append an edge to the list of edges.
@@ -292,12 +297,13 @@ private:
 
   std::string getValuePortName(Value operand) {
     // Print value as an operand and omit the leading '%' character.
-    auto str = strFromOs([&](raw_ostream &os) {
-      operand.printAsOperand(os, OpPrintingFlags());
-    });
+    auto str = strFromOs(
+        [&](raw_ostream &os) { operand.printAsOperand(os, *asmState); });
     // Replace % and # with _
     llvm::replace(str, '%', '_');
     llvm::replace(str, '#', '_');
+    llvm::replace(str, '.', '_');
+    llvm::replace(str, '-', '_');
     return str;
   }
 
@@ -376,7 +382,7 @@ private:
   std::string getLabel(BlockArgument arg) {
     return strFromOs([&](raw_ostream &os) {
       os << "<res" << getValuePortName(arg) << "> ";
-      arg.printAsOperand(os, OpPrintingFlags());
+      arg.printAsOperand(os, *asmState);
       if (printResultTypes) {
         os << " ";
         emitMlirType(os, arg.getType());
@@ -448,6 +454,9 @@ private:
 
   /// Output stream to write DOT file to.
   raw_indented_ostream os;
+  /// Re-usable assembly printer state for efficient printing. Initialized
+  /// on each pass run.
+  std::optional<AsmState> asmState;
   /// A list of edges. For simplicity, should be emitted after all nodes were
   /// emitted.
   std::vector<std::string> edges;
